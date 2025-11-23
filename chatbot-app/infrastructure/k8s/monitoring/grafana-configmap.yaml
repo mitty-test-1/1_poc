@@ -1,0 +1,162 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  namespace: monitoring
+data:
+  grafana.ini: |
+    [server]
+    http_port = 3000
+    domain = localhost
+    root_url = %(protocol)s://%(domain)s:%(http_port)s/grafana/
+    serve_from_sub_path = true
+    
+    [database]
+    type = sqlite3
+    path = grafana.db
+    
+    [security]
+    admin_password = admin123
+    admin_user = admin
+    secret_key = SW2YcwTIb9zpOOhoPsMm
+    
+    [users]
+    default_theme = light
+    default_theme_dark = dark
+    
+    [log]
+    mode = console
+    filters = rendering:debug
+    
+    [dataproxy]
+    timeout = 30
+    
+    [analytics]
+    check_for_updates = true
+    reporting_enabled = false
+    
+    [panels]
+    disable_legacy_storage = true
+    
+    [auth.anonymous]
+    enabled = true
+    org_role = Admin
+    
+  dashboards: |
+    {
+      "apiVersion": 1,
+      "providers": [
+        {
+          "name": "default",
+          "orgId": 1,
+          "folder": "",
+          "type": "file",
+          "disableDeletion": false,
+          "updateIntervalSeconds": 10,
+          "allowUiUpdates": true,
+          "options": {
+            "path": "/etc/grafana/provisioning/dashboards"
+          }
+        }
+      ]
+    }
+  
+  datasources: |
+    {
+      "apiVersion": 1,
+      "datasources": [
+        {
+          "access": "proxy",
+          "editable": true,
+          "orgId": 1,
+          "version": 1,
+          "name": "Prometheus",
+          "type": "prometheus",
+          "typeLogoUrl": "public/img/grafana_icon.svg",
+          "url": "http://prometheus:9090",
+          "password": "",
+          "user": "",
+          "database": "",
+          "basicAuth": false,
+          "basicAuthUser": "",
+          "basicAuthPassword": "",
+          "withCredentials": false,
+          "isDefault": true,
+          "jsonData": {
+            "httpMethod": "POST",
+            "queryTimeout": "60s",
+            "timeInterval": "15s"
+          },
+          "readOnly": false
+        },
+        {
+          "access": "proxy",
+          "editable": true,
+          "orgId": 1,
+          "version": 1,
+          "name": "Loki",
+          "type": "loki",
+          "typeLogoUrl": "public/img/grafana_icon.svg",
+          "url": "http://loki:3100",
+          "password": "",
+          "user": "",
+          "database": "",
+          "basicAuth": false,
+          "basicAuthUser": "",
+          "basicAuthPassword": "",
+          "withCredentials": false,
+          "isDefault": false,
+          "jsonData": {
+            "maxLines": 1000
+          },
+          "readOnly": false
+        }
+      ]
+    }
+    
+  alerting: |
+    {
+      "alerting": {
+        "enabled": true,
+        "execute_alerts": true
+      },
+      "grafana_net_url": "https://grafana.net",
+      "templates": [
+        {
+          "name": "template.1",
+          "orgId": 1,
+          "folder": "",
+          "template": "{{ template \"default.email.html\" . }}",
+          "enabled": true
+        }
+      ]
+    }
+    
+  notifiers: |
+    {
+      "notifiers": [
+        {
+          "name": "default",
+          "type": "webhook",
+          "uid": "default",
+          "orgId": 1,
+          "is_default": true,
+          "settings": {
+            "url": "http://alertmanager:9093",
+            "http_method": "POST",
+            "timeout": 5,
+            "username": "",
+            "password": "",
+            "headers": null,
+            "send_resolved": true
+          },
+          "frequency": "30s",
+          "disable_message": "",
+          "created": "0001-01-01T00:00:00Z",
+          "updated": "0001-01-01T00:00:00Z",
+          "version": 1,
+          "uid": "default",
+          "send_resolved": true
+        }
+      ]
+    }

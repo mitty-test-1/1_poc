@@ -1,0 +1,62 @@
+# Testing Framework Requirements
+# Core testing libraries
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+pytest-xdist==3.5.0
+pytest-html==4.1.1
+pytest-benchmark==4.0.0
+
+# Async testing
+aiohttp==3.9.1
+httpx==0.25.2
+
+# Mocking and fixtures
+responses==0.24.1
+freezegun==1.2.2
+
+# Data generation and validation
+faker==20.1.0
+jsonschema==4.19.2
+
+# Performance testing
+locust==2.17.0
+memory-profiler==0.61.0
+
+# Code quality
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.1
+isort==5.12.0
+
+# Test utilities
+deepdiff==6.7.1
+pytest-json-report==1.5.0
+
+# Service-specific testing dependencies
+# AI Service testing
+torch==2.1.2
+transformers==4.36.2
+scikit-learn==1.3.2
+nltk==3.8.1
+
+# Data Service testing
+pandas==2.1.4
+openpyxl==3.1.2
+
+# Database testing
+psycopg2-binary==2.9.9
+redis==5.0.1
+
+# API testing
+requests==2.31.0
+websockets==12.0
+
+# Environment and configuration
+python-dotenv==1.0.0
+pyyaml==6.0.1
+
+# Logging and monitoring
+loguru==0.7.2
+prometheus-client==0.19.0

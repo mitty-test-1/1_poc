@@ -1,6 +1,7 @@
 import express from 'express';
 import { ConversationManager } from '../services/ConversationManager';
 import { MessageManager } from '../services/MessageManager';
+import axios from 'axios';
 
 const router = express.Router();
 
@@ -95,6 +96,117 @@ router.patch('/conversations/:id/status', async (req, res) => {
   } catch (error) {
     console.error('Error updating conversation status:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Generate AI response
+router.post('/ai/generate-response', async (req, res) => {
+  try {
+    const { conversationId, message, userId, context = {} } = req.body;
+    
+    // Call AI service to generate response
+    const aiResponse = await axios.post('http://localhost:3007/api/generate-response', {
+      conversationId,
+      message,
+      userId,
+      context
+    }, {
+      timeout: 10000 // 10 second timeout
+    });
+
+    // Save AI response to database
+    const aiMessage = await MessageManager.createMessage({
+      conversationId,
+      senderId: 'ai',
+      content: aiResponse.data.response,
+      messageType: 'ai',
+      attachments: aiResponse.data.attachments || []
+    });
+
+    res.json({
+      response: aiResponse.data.response,
+      messageId: aiMessage.id,
+      confidence: aiResponse.data.confidence,
+      suggestions: aiResponse.data.suggestions || []
+    });
+  } catch (error) {
+    console.error('Error generating AI response:', error);
+    
+    // Fallback response if AI service is unavailable
+    const fallbackResponse = "I apologize, but I'm having trouble responding right now. Please try again later.";
+    
+    // Save fallback response
+    if (req.body.conversationId) {
+      await MessageManager.createMessage({
+        conversationId: req.body.conversationId,
+        senderId: 'ai',
+        content: fallbackResponse,
+        messageType: 'ai',
+        attachments: []
+      });
+    }
+    
+    res.status(500).json({
+      response: fallbackResponse,
+      error: 'AI service unavailable',
+      fallback: true
+    });
+  }
+});
+
+// Get AI conversation suggestions
+router.post('/ai/suggestions', async (req, res) => {
+  try {
+    const { conversationId, userId, context = {} } = req.body;
+    
+    const response = await axios.post('http://localhost:3007/api/suggestions', {
+      conversationId,
+      userId,
+      context
+    }, {
+      timeout: 5000 // 5 second timeout
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error getting AI suggestions:', error);
+    res.json({ suggestions: [] });
+  }
+});
+
+// Analyze conversation sentiment
+router.post('/ai/analyze-sentiment', async (req, res) => {
+  try {
+    const { conversationId } = req.body;
+    
+    const response = await axios.post('http://localhost:3007/api/analyze-sentiment', {
+      conversationId
+    }, {
+      timeout: 5000 // 5 second timeout
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error analyzing sentiment:', error);
+    res.json({ sentiment: 'neutral', confidence: 0 });
+  }
+});
+
+// Get conversation summary
+router.post('/ai/summary', async (req, res) => {
+  try {
+    const { conversationId } = req.body;
+    
+    const response = await axios.post('http://localhost:3007/api/summary', {
+      conversationId
+    }, {
+      timeout: 10000 // 10 second timeout
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error generating summary:', error);
+    res.json({ summary: 'Unable to generate summary at this time.' });
   }
 });
 

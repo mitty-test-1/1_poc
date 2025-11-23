@@ -94,6 +94,170 @@ router.post('/export/analytics', asyncHandler(async (req: Request, res: Response
   }
 }));
 
+// A/B testing endpoints
+router.post('/ab-testing/experiments', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Forward request to data service
+    const response = await axios.post('http://localhost:3006/api/ab-testing/experiments', req.body, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    res.json(response.data);
+  } catch (error: any) {
+    if (error.response) {
+      res.status(error.response.status).json(error.response.data);
+    } else {
+      next(createError('Data service unavailable', 503));
+    }
+  }
+}));
+
+router.get('/ab-testing/experiments', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Forward request to data service
+    const response = await axios.get('http://localhost:3006/api/ab-testing/experiments', {
+      timeout: 30000,
+      params: req.query
+    });
+    res.json(response.data);
+  } catch (error: any) {
+    if (error.response) {
+      res.status(error.response.status).json(error.response.data);
+    } else {
+      next(createError('Data service unavailable', 503));
+    }
+  }
+}));
+
+router.get('/ab-testing/experiments/:experimentId', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Forward request to data service
+    const response = await axios.get(`http://localhost:3006/api/ab-testing/experiments/${req.params.experimentId}`, {
+      timeout: 30000
+    });
+    res.json(response.data);
+  } catch (error: any) {
+    if (error.response) {
+      res.status(error.response.status).json(error.response.data);
+    } else {
+      next(createError('Data service unavailable', 503));
+    }
+  }
+}));
+
+router.post('/ab-testing/experiments/:experimentId/start', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Forward request to data service
+    const response = await axios.post(`http://localhost:3006/api/ab-testing/experiments/${req.params.experimentId}/start`, req.body, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    res.json(response.data);
+  } catch (error: any) {
+    if (error.response) {
+      res.status(error.response.status).json(error.response.data);
+    } else {
+      next(createError('Data service unavailable', 503));
+    }
+  }
+}));
+
+router.post('/ab-testing/experiments/:experimentId/pause', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Forward request to data service
+    const response = await axios.post(`http://localhost:3006/api/ab-testing/experiments/${req.params.experimentId}/pause`, req.body, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    res.json(response.data);
+  } catch (error: any) {
+    if (error.response) {
+      res.status(error.response.status).json(error.response.data);
+    } else {
+      next(createError('Data service unavailable', 503));
+    }
+  }
+}));
+
+router.post('/ab-testing/experiments/:experimentId/complete', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Forward request to data service
+    const response = await axios.post(`http://localhost:3006/api/ab-testing/experiments/${req.params.experimentId}/complete`, req.body, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    res.json(response.data);
+  } catch (error: any) {
+    if (error.response) {
+      res.status(error.response.status).json(error.response.data);
+    } else {
+      next(createError('Data service unavailable', 503));
+    }
+  }
+}));
+
+router.get('/ab-testing/experiments/:experimentId/results', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Forward request to data service
+    const response = await axios.get(`http://localhost:3006/api/ab-testing/experiments/${req.params.experimentId}/results`, {
+      timeout: 30000
+    });
+    res.json(response.data);
+  } catch (error: any) {
+    if (error.response) {
+      res.status(error.response.status).json(error.response.data);
+    } else {
+      next(createError('Data service unavailable', 503));
+    }
+  }
+}));
+
+router.post('/ab-testing/experiments/:experimentId/assign', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Forward request to data service
+    const response = await axios.post(`http://localhost:3006/api/ab-testing/experiments/${req.params.experimentId}/assign`, req.body, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    res.json(response.data);
+  } catch (error: any) {
+    if (error.response) {
+      res.status(error.response.status).json(error.response.data);
+    } else {
+      next(createError('Data service unavailable', 503));
+    }
+  }
+}));
+
+router.post('/ab-testing/experiments/:experimentId/track', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Forward request to data service
+    const response = await axios.post(`http://localhost:3006/api/ab-testing/experiments/${req.params.experimentId}/track`, req.body, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    res.json(response.data);
+  } catch (error: any) {
+    if (error.response) {
+      res.status(error.response.status).json(error.response.data);
+    } else {
+      next(createError('Data service unavailable', 503));
+    }
+  }
+}));
+
 // Import data
 router.post('/import', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   try {

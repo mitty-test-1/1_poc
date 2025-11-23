@@ -1,0 +1,1832 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    name: monitoring
+    purpose: observability
+
+---
+# Prometheus Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        monitor: 'chatbot-monitor'
+    
+    # Rule files
+    rule_files:
+      - "alert_rules.yml"
+    
+    # Alerting configuration
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager:9093
+    
+    scrape_configs:
+      # Prometheus itself
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+    
+      # Kubernetes API server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+    
+      # Node exporter
+      - job_name: 'node-exporter'
+        static_configs:
+          - targets: ['node-exporter:9100']
+    
+      # Kubelet
+      - job_name: 'kubernetes-nodes'
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics
+    
+      # Kube-state-metrics
+      - job_name: 'kube-state-metrics'
+        static_configs:
+          - targets: ['kube-state-metrics:8080']
+    
+      # cAdvisor
+      - job_name: 'kubernetes-cadvisor'
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+    
+      # Chatbot App Services
+      - job_name: 'chatbot-app'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+    
+      # Ingress controller
+      - job_name: 'kubernetes-ingress-nginx'
+        kubernetes_sd_configs:
+          - role: ingress
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_ingress_scheme, __address__, __meta_kubernetes_ingress_path]
+            regex: (.+);(.+);(.+)
+            replacement: ${1}://${2}${3}
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_ingress_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_ingress_name]
+            action: replace
+            target_label: ingress
+          - source_labels: [__meta_kubernetes_ingress_scheme]
+            action: replace
+            target_label: ingress_scheme
+          - source_labels: [__meta_kubernetes_ingress_class]
+            action: replace
+            target_label: ingress_class
+
+---
+# Alert Rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alert-rules
+  namespace: monitoring
+data:
+  alert_rules.yml: |
+    groups:
+    - name: chatbot-app.rules
+      rules:
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: sum(rate(container_cpu_usage_seconds_total{container!="", image!=""}[5m])) by (pod, namespace) / sum(container_spec_cpu_quota{container!="", image!=""} by (pod, namespace) * on(pod) group_left() kube_pod_container_resource_limits_cpu_cores) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.pod }}"
+          namespace: "{{ $labels.namespace }}"
+        annotations:
+          summary: "High CPU usage detected on {{ $labels.pod }} in {{ $labels.namespace }}"
+          description: "CPU usage is above 80% for more than 5 minutes on pod {{ $labels.pod }} in namespace {{ $labels.namespace }}"
+      
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: sum(container_memory_working_set_bytes{container!="", image!=""}) by (pod, namespace) / sum(container_spec_memory_limit_bytes{container!="", image!=""}) by (pod, namespace) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          service: "{{ $labels.pod }}"
+          namespace: "{{ $labels.namespace }}"
+        annotations:
+          summary: "High memory usage detected on {{ $labels.pod }} in {{ $labels.namespace }}"
+          description: "Memory usage is above 90% for more than 5 minutes on pod {{ $labels.pod }} in namespace {{ $labels.namespace }}"
+      
+      # High disk usage
+      - alert: HighDiskUsage
+        expr: (node_filesystem_size_bytes{fstype!="tmpfs"} - node_filesystem_free_bytes{fstype!="tmpfs"}) / node_filesystem_size_bytes{fstype!="tmpfs"} * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          node: "{{ $labels.instance }}"
+        annotations:
+          summary: "High disk usage detected on {{ $labels.instance }}"
+          description: "Disk usage is above 85% on {{ $labels.instance }}"
+      
+      # Pod restarts
+      - alert: PodRestarts
+        expr: changes(kube_pod_container_status_restarts_total[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          pod: "{{ $labels.pod }}"
+          namespace: "{{ $labels.namespace }}"
+        annotations:
+          summary: "Pod {{ $labels.pod }} is restarting frequently"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has restarted {{ $value }} times in the last hour"
+      
+      # Pod not ready
+      - alert: PodNotReady
+        expr: kube_pod_status_phase{phase!="Running"} == 1
+        for: 5m
+        labels:
+          severity: critical
+          pod: "{{ $labels.pod }}"
+          namespace: "{{ $labels.namespace }}"
+        annotations:
+          summary: "Pod {{ $labels.pod }} is not ready"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is not in Running state"
+      
+      # Deployment rollout stuck
+      - alert: DeploymentRolloutStuck
+        expr: kube_deployment_status_replicas_unavailable > 0
+        for: 15m
+        labels:
+          severity: critical
+          deployment: "{{ $labels.deployment }}"
+          namespace: "{{ $labels.namespace }}"
+        annotations:
+          summary: "Deployment {{ $labels.deployment }} rollout is stuck"
+          description: "Deployment {{ $labels.deployment }} in namespace {{ $labels.namespace }} has {{ $value }} unavailable replicas"
+      
+      # API Gateway errors
+      - alert: APIGatewayHighErrorRate
+        expr: (rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: "api-gateway"
+        annotations:
+          summary: "High error rate on API Gateway"
+          description: "API Gateway has {{ $value }}% error rate in the last 5 minutes"
+      
+      # Chat service latency
+      - alert: ChatServiceHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: "chat-service"
+        annotations:
+          summary: "High latency on Chat Service"
+          description: "Chat Service 95th percentile latency is {{ $value }} seconds"
+      
+      # Database connection pool usage
+      - alert: DatabaseConnectionPoolHighUsage
+        expr: pg_stat_database_numbackends / pg_settings_max_connections * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: "database"
+        annotations:
+          summary: "High database connection pool usage"
+          description: "Database connection pool usage is {{ $value }}%"
+      
+      # Redis memory usage
+      - alert: RedisMemoryUsageHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: "redis"
+        annotations:
+          summary: "High Redis memory usage"
+          description: "Redis memory usage is {{ $value }}%"
+      
+      # Message queue backlog
+      - alert: MessageQueueBacklog
+        expr: rabbitmq_queue_messages > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: "message-queue"
+        annotations:
+          summary: "High message queue backlog"
+          description: "Message queue has {{ $value }} messages in backlog"
+      
+      # Service unavailability
+      - alert: ServiceUnavailability
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: "{{ $labels.job }}"
+        annotations:
+          summary: "Service {{ $labels.job }} is unavailable"
+          description: "Service {{ $labels.job }} has been down for more than 1 minute"
+      
+      # High request rate
+      - alert: HighRequestRate
+        expr: rate(http_requests_total[5m]) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "High request rate on {{ $labels.service }}"
+          description: "{{ $labels.service }} is receiving {{ $value }} requests per second"
+      
+      # Error rate increase
+      - alert: ErrorRateIncrease
+        expr: (rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])) * 100 > (rate(http_requests_total{status=~"5.."}[1h]) / rate(http_requests_total[1h])) * 100 * 2
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "Error rate increase on {{ $labels.service }}"
+          description: "Error rate on {{ $labels.service }} has doubled compared to the last hour"
+      
+      # Database slow queries
+      - alert: DatabaseSlowQueries
+        expr: rate(pg_stat_database_calls_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: "database"
+        annotations:
+          summary: "High number of slow database queries"
+          description: "Database is executing {{ $value }} slow queries per minute"
+      
+      # WebSocket connection errors
+      - alert: WebSocketConnectionErrors
+        expr: rate(websocket_errors_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: "chat-service"
+        annotations:
+          summary: "High WebSocket connection errors"
+          description: "Chat Service has {{ $value }} WebSocket connection errors per minute"
+      
+      # AI service response time
+      - alert: AIServiceHighResponseTime
+        expr: histogram_quantile(0.95, rate(ai_service_response_duration_seconds_bucket[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: "ai-service"
+        annotations:
+          summary: "High AI service response time"
+          description: "AI service 95th percentile response time is {{ $value }} seconds"
+      
+      # Personalization service errors
+      - alert: PersonalizationServiceErrors
+        expr: rate(personalization_service_errors_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: "personalization-service"
+        annotations:
+          summary: "High error rate on Personalization Service"
+          description: "Personalization Service has {{ $value }} errors per minute"
+      
+      # Export service queue length
+      - alert: ExportServiceQueueLength
+        expr: export_service_queue_length > 50
+        for: 5m
+        labels:
+          severity: warning
+          service: "export-service"
+        annotations:
+          summary: "Long export service queue"
+          description: "Export service queue has {{ $value }} pending jobs"
+      
+      # System load average
+      - alert: HighSystemLoad
+        expr: 1 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance) * 100) / 100 > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          node: "{{ $labels.instance }}"
+        annotations:
+          summary: "High system load on {{ $labels.instance }}"
+          description: "System load average is {{ $value }} on {{ $labels.instance }}"
+      
+      # Disk I/O wait
+      - alert: HighDiskIOWait
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance) * 100) > 20
+        for: 5m
+        labels:
+          severity: warning
+          node: "{{ $labels.instance }}"
+        annotations:
+          summary: "High disk I/O wait on {{ $labels.instance }}"
+          description: "Disk I/O wait is {{ $value }}% on {{ $labels.instance }}"
+      
+      # Network packet loss
+      - alert: NetworkPacketLoss
+        expr: (rate(node_network_drop_total[5m]) + rate(node_network_transmit_drop_total[5m])) / (rate(node_network_receive_total[5m]) + rate(node_network_transmit_total[5m])) * 100 > 1
+        for: 5m
+        labels:
+          severity: warning
+          node: "{{ $labels.instance }}"
+        annotations:
+          summary: "Network packet loss on {{ $labels.instance }}"
+          description: "Network packet loss is {{ $value }}% on {{ $labels.instance }}"
+      
+      # Container restarts
+      - alert: ContainerRestarts
+        expr: changes(kube_pod_container_status_restarts_total[1h]) > 5
+        for: 5m
+        labels:
+          severity: critical
+          pod: "{{ $labels.pod }}"
+          namespace: "{{ $labels.namespace }}"
+        annotations:
+          summary: "Container {{ $labels.container }} is restarting frequently"
+          description: "Container {{ $labels.container }} in pod {{ $labels.pod }} has restarted {{ $value }} times in the last hour"
+      
+      # Pod memory pressure
+      - alert: PodMemoryPressure
+        expr: kube_pod_container_resource_requests_memory_bytes / kube_pod_container_resource_limits_memory_bytes * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          pod: "{{ $labels.pod }}"
+          namespace: "{{ $labels.namespace }}"
+        annotations:
+          summary: "Pod {{ $labels.pod }} memory pressure"
+          description: "Pod {{ $labels.pod }} is using {{ $value }}% of its memory limit"
+      
+      # Pod CPU pressure
+      - alert: PodCPUPressure
+        expr: kube_pod_container_resource_requests_cpu_cores / kube_pod_container_resource_limits_cpu_cores * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          pod: "{{ $labels.pod }}"
+          namespace: "{{ $labels.namespace }}"
+        annotations:
+          summary: "Pod {{ $labels.pod }} CPU pressure"
+          description: "Pod {{ $labels.pod }} is using {{ $value }}% of its CPU limit"
+    
+    - name: chatbot-business.rules
+      rules:
+      # High chat response time
+      - alert: HighChatResponseTime
+        expr: histogram_quantile(0.95, rate(chat_response_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: "chat-service"
+        annotations:
+          summary: "High chat response time"
+          description: "95th percentile chat response time is {{ $value }} seconds"
+      
+      # Low chat satisfaction
+      - alert: LowChatSatisfaction
+        expr: rate(chat_satisfaction_score_total[5m]) < 3
+        for: 15m
+        labels:
+          severity: warning
+          service: "chat-service"
+        annotations:
+          summary: "Low chat satisfaction score"
+          description: "Chat satisfaction score is {{ $value }} in the last 15 minutes"
+      
+      # High error rate in chat
+      - alert: HighChatErrorRate
+        expr: (rate(chat_errors_total[5m]) / rate(chat_messages_total[5m])) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: "chat-service"
+        annotations:
+          summary: "High error rate in chat"
+          description: "Chat error rate is {{ $value }}% in the last 5 minutes"
+      
+      # Low user engagement
+      - alert: LowUserEngagement
+        expr: rate(user_active_sessions[5m]) < 10
+        for: 30m
+        labels:
+          severity: info
+          service: "user-engagement"
+        annotations:
+          summary: "Low user engagement"
+          description: "Only {{ $value }} active users in the last 30 minutes"
+      
+      # High conversation abandonment rate
+      - alert: HighConversationAbandonmentRate
+        expr: (rate(conversations_abandoned_total[5m]) / rate(conversations_started_total[5m])) * 100 > 30
+        for: 15m
+        labels:
+          severity: warning
+          service: "chat-service"
+        annotations:
+          summary: "High conversation abandonment rate"
+          description: "Conversation abandonment rate is {{ $value }}% in the last 15 minutes"
+      
+      # Low resolution rate
+      - alert: LowResolutionRate
+        expr: (rate(conversations_resolved_total[5m]) / rate(conversations_started_total[5m])) * 100 < 70
+        for: 15m
+        labels:
+          severity: warning
+          service: "chat-service"
+        annotations:
+          summary: "Low resolution rate"
+          description: "Resolution rate is {{ $value }}% in the last 15 minutes"
+      
+      # High wait time
+      - alert: HighWaitTime
+        expr: histogram_quantile(0.95, rate(wait_time_seconds_bucket[5m])) > 60
+        for: 5m
+        labels:
+          severity: warning
+          service: "chat-service"
+        annotations:
+          summary: "High customer wait time"
+          description: "95th percentile customer wait time is {{ $value }} seconds"
+      
+      # Low agent response rate
+      - alert: LowAgentResponseRate
+        expr: (rate(agent_responses_total[5m]) / rate(customer_messages_total[5m])) * 100 < 80
+        for: 15m
+        labels:
+          severity: warning
+          service: "chat-service"
+        annotations:
+          summary: "Low agent response rate"
+          description: "Agent response rate is {{ $value }}% in the last 15 minutes"
+      
+      # High message volume
+      - alert: HighMessageVolume
+        expr: rate(messages_total[5m]) > 1000
+        for: 5m
+        labels:
+          severity: info
+          service: "chat-service"
+        annotations:
+          summary: "High message volume"
+          description: "Message volume is {{ $value }} messages per minute"
+      
+      # Low user retention
+      - alert: LowUserRetention
+        expr: (rate(returning_users_total[5m]) / rate(new_users_total[5m])) * 100 < 20
+        for: 7d
+        labels:
+          severity: warning
+          service: "user-retention"
+        annotations:
+          summary: "Low user retention rate"
+          description: "User retention rate is {{ $value }}% in the last 7 days"
+
+---
+# Alertmanager Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'localhost:587'
+      smtp_from: 'alerts@chatbot.com'
+      smtp_auth_username: 'alerts@chatbot.com'
+      smtp_auth_password: 'alert-password'
+    
+    # Templates
+    templates:
+      - '/etc/alertmanager/templates/*.tmpl'
+    
+    # Route tree
+    route:
+      group_by: ['alertname', 'severity', 'service']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 12h
+      receiver: 'web.hook'
+      routes:
+      - match:
+          severity: critical
+        receiver: 'critical-alerts'
+        continue: true
+      - match:
+          severity: warning
+        receiver: 'warning-alerts'
+        continue: true
+      - match:
+          severity: info
+        receiver: 'info-alerts'
+    
+    # Receivers
+    receivers:
+    - name: 'web.hook'
+      email_configs:
+      - to: 'admin@chatbot.com'
+        subject: 'Chatbot App Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Service: {{ .Labels.service }}
+          Severity: {{ .Labels.severity }}
+          Timestamp: {{ .StartsAt }}
+          {{ end }}
+    
+    - name: 'critical-alerts'
+      email_configs:
+      - to: 'admin@chatbot.com,devops@chatbot.com'
+        subject: '[CRITICAL] Chatbot App Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          CRITICAL ALERT: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Service: {{ .Labels.service }}
+          Timestamp: {{ .StartsAt }}
+          {{ end }}
+      slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts-critical'
+        title: 'Critical Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          Service: {{ .Labels.service }}
+          Severity: {{ .Labels.severity }}
+          {{ end }}
+    
+    - name: 'warning-alerts'
+      email_configs:
+      - to: 'devops@chatbot.com'
+        subject: '[WARNING] Chatbot App Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          WARNING: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Service: {{ .Labels.service }}
+          Timestamp: {{ .StartsAt }}
+          {{ end }}
+      slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts-warning'
+        title: 'Warning Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          Service: {{ .Labels.service }}
+          Severity: {{ .Labels.severity }}
+          {{ end }}
+    
+    - name: 'info-alerts'
+      email_configs:
+      - to: 'devops@chatbot.com'
+        subject: '[INFO] Chatbot App Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          INFO: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Service: {{ .Labels.service }}
+          Timestamp: {{ .StartsAt }}
+          {{ end }}
+
+---
+# Grafana Dashboards
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+data:
+  kubernetes-cluster.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "prometheus",
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "hiddenSeries": false,
+          "id": 1,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "dataLinks": []
+          },
+          "percentage": false,
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(container_cpu_usage_seconds_total{container!=\"\", image!=\"\"}[5m])) by (pod)",
+              "legendFormat": "{{ pod }}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "CPU Usage by Pod",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        }
+      ],
+      "refresh": "5s",
+      "schemaVersion": 16,
+      "style": "dark",
+      "tags": [],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "",
+      "title": "Kubernetes Cluster Overview",
+      "uid": "kubernetes-cluster",
+      "version": 1
+    }
+  
+  chatbot-app.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "prometheus",
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "hiddenSeries": false,
+          "id": 1,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "dataLinks": []
+          },
+          "percentage": false,
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "rate(http_requests_total[5m])",
+              "legendFormat": "{{ method }} {{ status }}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "HTTP Request Rate",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "reqps",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "prometheus",
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "hiddenSeries": false,
+          "id": 2,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "dataLinks": []
+          },
+          "percentage": false,
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+              "legendFormat": "95th percentile",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket[5m]))",
+              "legendFormat": "50th percentile",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "HTTP Response Time",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "prometheus",
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 8
+          },
+          "hiddenSeries": false,
+          "id": 3,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "dataLinks": []
+          },
+          "percentage": false,
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "rate(chat_messages_total[5m])",
+              "legendFormat": "Messages",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Chat Messages",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "msgps",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "prometheus",
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 8
+          },
+          "hiddenSeries": false,
+          "id": 4,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "dataLinks": []
+          },
+          "percentage": false,
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "rate(chat_errors_total[5m])",
+              "legendFormat": "Errors",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Chat Errors",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "errps",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": 0,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        }
+      ],
+      "refresh": "5s",
+      "schemaVersion": 16,
+      "style": "dark",
+      "tags": [],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "",
+      "title": "Chatbot Application Metrics",
+      "uid": "chatbot-app",
+      "version": 1
+    }
+
+---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+    component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+      component: server
+  template:
+    metadata:
+      labels:
+        app: prometheus
+        component: server
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '9090'
+    spec:
+      serviceAccountName: prometheus
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        args:
+          - '--config.file=/etc/prometheus/prometheus.yml'
+          - '--storage.tsdb.path=/prometheus'
+          - '--web.console.libraries=/etc/prometheus/console_libraries'
+          - '--web.console.templates=/etc/prometheus/consoles'
+          - '--storage.tsdb.retention.time=200h'
+          - '--web.enable-lifecycle'
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus
+        - name: prometheus-storage
+          mountPath: /prometheus
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      - name: prometheus-storage
+        persistentVolumeClaim:
+          claimName: prometheus-pvc
+
+---
+# Prometheus Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+    component: server
+spec:
+  selector:
+    app: prometheus
+    component: server
+  ports:
+  - port: 9090
+    targetPort: 9090
+  type: ClusterIP
+
+---
+# Alertmanager Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  labels:
+    app: alertmanager
+    component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+      component: server
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+        component: server
+    spec:
+      serviceAccountName: alertmanager
+      containers:
+      - name: alertmanager
+        image: prom/alertmanager:latest
+        args:
+          - '--config.file=/etc/alertmanager/alertmanager.yml'
+          - '--storage.path=/alertmanager'
+        ports:
+        - containerPort: 9093
+        volumeMounts:
+        - name: alertmanager-config
+          mountPath: /etc/alertmanager
+        - name: alertmanager-storage
+          mountPath: /alertmanager
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      volumes:
+      - name: alertmanager-config
+        configMap:
+          name: alertmanager-config
+      - name: alertmanager-storage
+        persistentVolumeClaim:
+          claimName: alertmanager-pvc
+
+---
+# Alertmanager Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  labels:
+    app: alertmanager
+    component: server
+spec:
+  selector:
+    app: alertmanager
+    component: server
+  ports:
+  - port: 9093
+    targetPort: 9093
+  type: ClusterIP
+
+---
+# Grafana Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+    component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+      component: server
+  template:
+    metadata:
+      labels:
+        app: grafana
+        component: server
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: "admin"
+        - name: GF_USERS_ALLOW_SIGN_UP
+          value: "false"
+        volumeMounts:
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+        - name: grafana-dashboards
+          mountPath: /etc/grafana/provisioning/dashboards
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: grafana-storage
+        persistentVolumeClaim:
+          claimName: grafana-pvc
+      - name: grafana-dashboards
+        configMap:
+          name: grafana-dashboards
+
+---
+# Grafana Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+    component: server
+spec:
+  selector:
+    app: grafana
+    component: server
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: ClusterIP
+
+---
+# Node Exporter Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-exporter
+  namespace: monitoring
+  labels:
+    app: node-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+    spec:
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:latest
+        ports:
+        - containerPort: 9100
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+---
+# Node Exporter Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-exporter
+  namespace: monitoring
+  labels:
+    app: node-exporter
+spec:
+  selector:
+    app: node-exporter
+  ports:
+  - port: 9100
+    targetPort: 9100
+  type: ClusterIP
+
+---
+# Kube State Metrics Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-state-metrics
+  namespace: monitoring
+  labels:
+    app: kube-state-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-state-metrics
+  template:
+    metadata:
+      labels:
+        app: kube-state-metrics
+    spec:
+      containers:
+      - name: kube-state-metrics
+        image: quay.io/coreos/kube-state-metrics:v2.3.0
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+---
+# Kube State Metrics Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-state-metrics
+  namespace: monitoring
+  labels:
+    app: kube-state-metrics
+spec:
+  selector:
+    app: kube-state-metrics
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# Service Accounts
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alertmanager
+  namespace: monitoring
+
+---
+# Cluster Roles
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "services", "endpoints", "pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alertmanager
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+
+---
+# Cluster Role Bindings
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alertmanager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alertmanager
+subjects:
+- kind: ServiceAccount
+  name: alertmanager
+  namespace: monitoring
+
+---
+# Persistent Volume Claims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: standard
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-pvc
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pvc
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
+
+---
+# Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-network-policy
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: chatbot-app-prod
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 9090
+    - protocol: TCP
+      port: 9093
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9100
+  egress:
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+---
+# Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: monitoring-quota
+  namespace: monitoring
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: "4Gi"
+    limits.cpu: "4"
+    limits.memory: "8Gi"
+    pods: "10"
+    services: "5"
+    persistentvolumeclaims: "3"
+    secrets: "5"
+    configmaps: "5"
+
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: prometheus-pdb
+  namespace: monitoring
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: prometheus
+      component: server
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: grafana-pdb
+  namespace: monitoring
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: grafana
+      component: server
+
+---
+# Service Monitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: monitoring-stack
+  namespace: monitoring
+  labels:
+    app: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: monitoring
+  namespaceSelector:
+    matchNames:
+    - monitoring
+  endpoints:
+  - port: http
+    interval: 15s
+    path: /metrics
+
+---
+# Grafana Datasource Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+data:
+  prometheus.yaml: |
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      orgId: 1
+      url: http://prometheus:9090
+      basicAuth: false
+      isDefault: true
+      version: 1
+      editable: false
+      jsonData:
+        httpMethod: POST
+        queryTimeout: 60s
+        timeInterval: 15s
+
+---
+# Grafana Dashboard Provisioning
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provisioning
+  namespace: monitoring
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+    - name: 'default'
+      orgId: 1
+      folder: ''
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 10
+      allowUiUpdates: true
+      options:
+        path: /etc/grafana/provisioning/dashboards
+
+---
+# Final Health Check
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring-health-check
+  namespace: monitoring
+  labels:
+    app: monitoring-health-check
+    tier: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring-health-check
+      tier: monitoring
+  template:
+    metadata:
+      labels:
+        app: monitoring-health-check
+        tier: monitoring
+    spec:
+      containers:
+      - name: health-check
+        image: busybox:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          while true; do
+            echo "Monitoring health check running at $(date)"
+            sleep 60
+          done
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# Health Check Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-health-check
+  namespace: monitoring
+  labels:
+    app: monitoring-health-check
+    tier: monitoring
+spec:
+  selector:
+    app: monitoring-health-check
+    tier: monitoring
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP

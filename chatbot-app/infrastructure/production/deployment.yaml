@@ -1,0 +1,1680 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chatbot-app-prod
+  labels:
+    name: chatbot-app-prod
+    environment: production
+
+---
+# Kubernetes ConfigMap for Application Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: chatbot-app-prod
+data:
+  # Database Configuration
+  database-url: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres-service:5432/chatbot_prod"
+  redis-url: "redis://redis-service:6379"
+  
+  # JWT Configuration
+  jwt-secret: "${JWT_SECRET}"
+  jwt-expiry: "24h"
+  
+  # API Gateway Configuration
+  api-gateway-host: "api.chatbot.com"
+  api-gateway-port: "80"
+  
+  # Frontend Configuration
+  frontend-url: "https://chatbot.com"
+  websocket-url: "wss://chatbot.com"
+  
+  # Monitoring Configuration
+  prometheus-url: "http://prometheus.monitoring.svc.cluster.local:9090"
+  grafana-url: "http://grafana.monitoring.svc.cluster.local:3000"
+  
+  # AI Service Configuration
+  ai-service-url: "http://ai-service.chatbot-app-prod.svc.cluster.local:8000"
+  ai-model-path: "/models/chatbot_model"
+  
+  # Personalization Service Configuration
+  personalization-service-url: "http://personalization-service.chatbot-app-prod.svc.cluster.local:3005"
+  
+  # Rate Limiting
+  rate-limit-requests: "100"
+  rate-limit-window: "60"
+  
+  # Security
+  cors-origins: "https://chatbot.com"
+  allowed-methods: "GET,POST,PUT,DELETE,OPTIONS"
+  allowed-headers: "Content-Type,Authorization,X-Requested-With"
+
+---
+# Kubernetes Secret for Production
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+  namespace: chatbot-app-prod
+type: Opaque
+data:
+  # Database Secrets
+  POSTGRES_PASSWORD: cG9zdGdyZXNxbDpzZWN1cmV0X3Bhc3N3b3Jk  # postgres:secure_password
+  POSTGRES_USER: cG9zdGdyZXNxbA==  # postgres
+  
+  # JWT Secrets
+  JWT_SECRET: eW91cl9zZWN1cmVrZXlfa2V5X2hlcmU=  # your_secret_key_here
+  
+  # API Keys
+  OPENAI_API_KEY: b25lLW9wZW5haWwta2V5  # openai-api-key
+  ANTHROPIC_API_KEY:YW50aHJpcGljLWtleQ==  # anthropic-api-key
+  
+  # Redis Password
+  REDIS_PASSWORD: cmVkaXMtcGFzc3dvcmQ=  # redis-password
+  
+  # Monitoring Secrets
+  GRAFANA_ADMIN_PASSWORD: Z3JhZnphbm8=  # grafanaadmin
+  PROMETHEUS_BASIC_AUTH: cHJvbWV0aGV1czpwb21ldHJpYzEyMw==  # prometheus:prometheus123
+
+---
+# PostgreSQL Database Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: postgres
+    tier: database
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: postgres
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          value: "chatbot_prod"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - postgres
+              topologyKey: "kubernetes.io/hostname"
+
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: chatbot-app-prod
+  labels:
+    app: postgres
+    tier: database
+spec:
+  selector:
+    app: postgres
+    tier: database
+  ports:
+  - port: 5432
+    targetPort: 5432
+  clusterIP: None
+
+---
+# Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: redis
+    tier: cache
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: redis
+      tier: cache
+  template:
+    metadata:
+      labels:
+        app: redis
+        tier: cache
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        command:
+        - redis-server
+        - --requirepass
+        - $(REDIS_PASSWORD)
+        - --maxmemory
+        - "256mb"
+        - --maxmemory-policy
+        - allkeys-lru
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: redis-storage
+        persistentVolumeClaim:
+          claimName: redis-pvc
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - redis
+              topologyKey: "kubernetes.io/hostname"
+
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: chatbot-app-prod
+  labels:
+    app: redis
+    tier: cache
+spec:
+  selector:
+    app: redis
+    tier: cache
+  ports:
+  - port: 6379
+    targetPort: 6379
+  clusterIP: None
+
+---
+# API Gateway Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: api-gateway
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api-gateway
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        tier: backend
+    spec:
+      containers:
+      - name: api-gateway
+        image: chatbot-app/api-gateway:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3000"
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JWT_SECRET
+        - name: FRONTEND_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: frontend-url
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+      volumes:
+      - name: config-volume
+        configMap:
+          name: app-config
+---
+# API Gateway Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-service
+  namespace: chatbot-app-prod
+  labels:
+    app: api-gateway
+    tier: backend
+spec:
+  selector:
+    app: api-gateway
+    tier: backend
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: ClusterIP
+
+---
+# Authentication Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: auth-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        tier: backend
+    spec:
+      containers:
+      - name: auth-service
+        image: chatbot-app/auth-service:latest
+        ports:
+        - containerPort: 3001
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3001"
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JWT_SECRET
+        - name: FRONTEND_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: frontend-url
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Authentication Service Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service-service
+  namespace: chatbot-app-prod
+  labels:
+    app: auth-service
+    tier: backend
+spec:
+  selector:
+    app: auth-service
+    tier: backend
+  ports:
+  - port: 80
+    targetPort: 3001
+  type: ClusterIP
+
+---
+# Chat Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat-service-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: chat-service
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: chat-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: chat-service
+        tier: backend
+    spec:
+      containers:
+      - name: chat-service
+        image: chatbot-app/chat-service:latest
+        ports:
+        - containerPort: 3002
+        - name: websocket
+          containerPort: 3003
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3002"
+        - name: WEBSOCKET_PORT
+          value: "3003"
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: redis-url
+        - name: FRONTEND_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: frontend-url
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Chat Service Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-service-service
+  namespace: chatbot-app-prod
+  labels:
+    app: chat-service
+    tier: backend
+spec:
+  selector:
+    app: chat-service
+    tier: backend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3002
+  - name: websocket
+    port: 80
+    targetPort: 3003
+  type: ClusterIP
+
+---
+# Admin Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-service-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: admin-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: admin-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: admin-service
+        tier: backend
+    spec:
+      containers:
+      - name: admin-service
+        image: chatbot-app/admin-service:latest
+        ports:
+        - containerPort: 3004
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3004"
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: redis-url
+        - name: FRONTEND_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: frontend-url
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Admin Service Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-service-service
+  namespace: chatbot-app-prod
+  labels:
+    app: admin-service
+    tier: backend
+spec:
+  selector:
+    app: admin-service
+    tier: backend
+  ports:
+  - port: 80
+    targetPort: 3004
+  type: ClusterIP
+
+---
+# Personalization Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: personalization-service-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: personalization-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: personalization-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: personalization-service
+        tier: backend
+    spec:
+      containers:
+      - name: personalization-service
+        image: chatbot-app/personalization-service:latest
+        ports:
+        - containerPort: 3005
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3005"
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: redis-url
+        - name: FRONTEND_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: frontend-url
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3005
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3005
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Personalization Service Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: personalization-service-service
+  namespace: chatbot-app-prod
+  labels:
+    app: personalization-service
+    tier: backend
+spec:
+  selector:
+    app: personalization-service
+    tier: backend
+  ports:
+  - port: 80
+    targetPort: 3005
+  type: ClusterIP
+
+---
+# AI/ML Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-service-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: ai-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: ai-service
+        tier: backend
+    spec:
+      containers:
+      - name: ai-service
+        image: chatbot-app/ai-service:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "8000"
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: redis-url
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: OPENAI_API_KEY
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: ANTHROPIC_API_KEY
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 15
+
+---
+# AI/ML Service Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-service-service
+  namespace: chatbot-app-prod
+  labels:
+    app: ai-service
+    tier: backend
+spec:
+  selector:
+    app: ai-service
+    tier: backend
+  ports:
+  - port: 80
+    targetPort: 8000
+  type: ClusterIP
+
+---
+# Data Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-service-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: data-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: data-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: data-service
+        tier: backend
+    spec:
+      containers:
+      - name: data-service
+        image: chatbot-app/data-service:latest
+        ports:
+        - containerPort: 3006
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3006"
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: redis-url
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3006
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3006
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Data Service Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-service-service
+  namespace: chatbot-app-prod
+  labels:
+    app: data-service
+    tier: backend
+spec:
+  selector:
+    app: data-service
+    tier: backend
+  ports:
+  - port: 80
+    targetPort: 3006
+  type: ClusterIP
+
+---
+# Frontend Shell Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shell-app-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: shell-app
+    tier: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: shell-app
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: shell-app
+        tier: frontend
+    spec:
+      containers:
+      - name: shell-app
+        image: chatbot-app/shell-app:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3000"
+        - name: REACT_APP_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: frontend-url
+        - name: REACT_APP_WS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: websocket-url
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Frontend Shell App Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: shell-app-service
+  namespace: chatbot-app-prod
+  labels:
+    app: shell-app
+    tier: frontend
+spec:
+  selector:
+    app: shell-app
+    tier: frontend
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: ClusterIP
+
+---
+# Monitoring Stack - Prometheus
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: prometheus
+    tier: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+      tier: monitoring
+  template:
+    metadata:
+      labels:
+        app: prometheus
+        tier: monitoring
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        ports:
+        - containerPort: 9090
+        args:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus'
+        - '--web.console.libraries=/etc/prometheus/console_libraries'
+        - '--web.console.templates=/etc/prometheus/consoles'
+        - '--storage.tsdb.retention.time=200h'
+        - '--web.enable-lifecycle'
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus
+        - name: prometheus-storage
+          mountPath: /prometheus
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      - name: prometheus-storage
+        persistentVolumeClaim:
+          claimName: prometheus-pvc
+
+---
+# Prometheus Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-service
+  namespace: chatbot-app-prod
+  labels:
+    app: prometheus
+    tier: monitoring
+spec:
+  selector:
+    app: prometheus
+    tier: monitoring
+  ports:
+  - port: 9090
+    targetPort: 9090
+  type: ClusterIP
+
+---
+# Monitoring Stack - Grafana
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: grafana
+    tier: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+      tier: monitoring
+  template:
+    metadata:
+      labels:
+        app: grafana
+        tier: monitoring
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: GRAFANA_ADMIN_PASSWORD
+        volumeMounts:
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: grafana-storage
+        persistentVolumeClaim:
+          claimName: grafana-pvc
+
+---
+# Grafana Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-service
+  namespace: chatbot-app-prod
+  labels:
+    app: grafana
+    tier: monitoring
+spec:
+  selector:
+    app: grafana
+    tier: monitoring
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: ClusterIP
+
+---
+# Ingress Configuration
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chatbot-app-ingress
+  namespace: chatbot-app-prod
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "60"
+spec:
+  tls:
+  - hosts:
+    - chatbot.com
+    - api.chatbot.com
+    secretName: chatbot-app-tls
+  rules:
+  - host: chatbot.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: shell-app-service
+            port:
+              number: 80
+  - host: api.chatbot.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api-gateway-service
+            port:
+              number: 80
+
+---
+# Horizontal Pod Autoscalers
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa
+  namespace: chatbot-app-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway-deployment
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chat-service-hpa
+  namespace: chatbot-app-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chat-service-deployment
+  minReplicas: 3
+  maxReplicas: 15
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: websocket_connections
+      target:
+        type: AverageValue
+        averageValue: 100
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ai-service-hpa
+  namespace: chatbot-app-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ai-service-deployment
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+---
+# Network Policies
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-network-policy
+  namespace: chatbot-app-prod
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: chatbot-app-prod
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: chatbot-app-prod
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 5432
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 9090
+    - protocol: TCP
+      port: 3000
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+---
+# Persistent Volume Claims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: chatbot-app-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: chatbot-app-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+  namespace: chatbot-app-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: standard
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pvc
+  namespace: chatbot-app-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
+
+---
+# Prometheus Configuration ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: chatbot-app-prod
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    
+    scrape_configs:
+    - job_name: 'prometheus'
+      static_configs:
+      - targets: ['localhost:9090']
+    
+    - job_name: 'api-gateway'
+      static_configs:
+      - targets: ['api-gateway-service:80']
+    
+    - job_name: 'auth-service'
+      static_configs:
+      - targets: ['auth-service-service:80']
+    
+    - job_name: 'chat-service'
+      static_configs:
+      - targets: ['chat-service-service:80']
+    
+    - job_name: 'admin-service'
+      static_configs:
+      - targets: ['admin-service-service:80']
+    
+    - job_name: 'personalization-service'
+      static_configs:
+      - targets: ['personalization-service-service:80']
+    
+    - job_name: 'ai-service'
+      static_configs:
+      - targets: ['ai-service-service:80']
+    
+    - job_name: 'data-service'
+      static_configs:
+      - targets: ['data-service-service:80']
+    
+    - job_name: 'shell-app'
+      static_configs:
+      - targets: ['shell-app-service:80']
+    
+    - job_name: 'postgres'
+      static_configs:
+      - targets: ['postgres-service:5432']
+    
+    - job_name: 'redis'
+      static_configs:
+      - targets: ['redis-service:6379']
+    
+    - job_name: 'grafana'
+      static_configs:
+      - targets: ['grafana-service:3000']
+
+---
+# Resource Quota for Production Namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: production-quota
+  namespace: chatbot-app-prod
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: "8Gi"
+    limits.cpu: "8"
+    limits.memory: "16Gi"
+    pods: "50"
+    services: "20"
+    persistentvolumeclaims: "10"
+    secrets: "10"
+    configmaps: "10"
+
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway-pdb
+  namespace: chatbot-app-prod
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+      tier: backend
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: chat-service-pdb
+  namespace: chatbot-app-prod
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: chat-service
+      tier: backend
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-pdb
+  namespace: chatbot-app-prod
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgres
+      tier: database
+
+---
+# Service Monitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: chatbot-app-services
+  namespace: chatbot-app-prod
+  labels:
+    app: chatbot-app
+spec:
+  selector:
+    matchLabels:
+      app: chatbot-app
+  namespaceSelector:
+    matchNames:
+    - chatbot-app-prod
+  endpoints:
+  - port: http
+    interval: 15s
+    path: /metrics
+
+---
+# Alertmanager Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: chatbot-app-prod
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'localhost:587'
+      smtp_from: 'alerts@chatbot.com'
+      smtp_auth_username: 'alerts@chatbot.com'
+      smtp_auth_password: 'alert-password'
+    
+    route:
+      group_by: ['alertname']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'web.hook'
+    
+    receivers:
+    - name: 'web.hook'
+      email_configs:
+      - to: 'admin@chatbot.com'
+        subject: 'Chatbot App Alert: {{ .GroupLabels.alertname }}'
+
+---
+# Alertmanager Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: alertmanager
+    tier: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+      tier: monitoring
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+        tier: monitoring
+    spec:
+      containers:
+      - name: alertmanager
+        image: prom/alertmanager:latest
+        ports:
+        - containerPort: 9093
+        args:
+        - '--config.file=/etc/alertmanager/alertmanager.yml'
+        - '--storage.path=/alertmanager'
+        volumeMounts:
+        - name: alertmanager-config
+          mountPath: /etc/alertmanager
+        - name: alertmanager-storage
+          mountPath: /alertmanager
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      volumes:
+      - name: alertmanager-config
+        configMap:
+          name: alertmanager-config
+      - name: alertmanager-storage
+        persistentVolumeClaim:
+          claimName: alertmanager-pvc
+
+---
+# Alertmanager Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-service
+  namespace: chatbot-app-prod
+  labels:
+    app: alertmanager
+    tier: monitoring
+spec:
+  selector:
+    app: alertmanager
+    tier: monitoring
+  ports:
+  - port: 9093
+    targetPort: 9093
+  type: ClusterIP
+
+---
+# Alertmanager PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-pvc
+  namespace: chatbot-app-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
+
+---
+# Final Health Check Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-check-deployment
+  namespace: chatbot-app-prod
+  labels:
+    app: health-check
+    tier: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: health-check
+      tier: monitoring
+  template:
+    metadata:
+      labels:
+        app: health-check
+        tier: monitoring
+    spec:
+      containers:
+      - name: health-check
+        image: busybox:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          while true; do
+            echo "Health check running at $(date)"
+            sleep 60
+          done
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# Health Check Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: health-check-service
+  namespace: chatbot-app-prod
+  labels:
+    app: health-check
+    tier: monitoring
+spec:
+  selector:
+    app: health-check
+    tier: monitoring
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP

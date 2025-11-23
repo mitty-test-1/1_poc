@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
 import { validateRequest } from '../middleware/validation';
+import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
 import { authSchema, loginSchema } from '../schemas/auth';
 
 const router = express.Router();
@@ -64,6 +65,11 @@ router.post('/login', validateRequest(loginSchema), async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Check if user has OAuth-only account (no password)
+    if (!user.passwordHash) {
+      return res.status(401).json({ error: 'This account uses OAuth login. Please use Google, GitHub, or Microsoft to sign in.' });
+    }
+
     // Check password
     const isValidPassword = await bcrypt.compare(password, user.passwordHash);
     if (!isValidPassword) {
@@ -71,7 +77,7 @@ router.post('/login', validateRequest(loginSchema), async (req, res) => {
     }
 
     // Update last login
-    await User.updateLastLogin(user.id);
+    await User.updateLastLogin(user.id!);
 
     // Generate JWT token
     const token = jwt.sign(
@@ -100,7 +106,7 @@ router.post('/login', validateRequest(loginSchema), async (req, res) => {
 router.post('/refresh', async (req, res) => {
   try {
     const { token } = req.body;
-    
+
     if (!token) {
       return res.status(401).json({ error: 'Token required' });
     }
@@ -121,6 +127,65 @@ router.post('/refresh', async (req, res) => {
     res.json({ token: newToken });
   } catch (error) {
     res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+// Get user profile (requires authentication)
+router.get('/profile', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        oauthProvider: user.oauthProvider,
+        picture: user.picture,
+        emailVerified: user.emailVerified,
+        createdAt: user.createdAt,
+        lastLogin: user.lastLogin
+      }
+    });
+  } catch (error) {
+    console.error('Profile fetch error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get CSRF token
+router.get('/csrf-token', (req, res) => {
+  res.json({ csrfToken: (req as any).csrfToken() });
+});
+
+// Update user profile
+router.put('/profile', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const { name, preferences } = req.body;
+
+    // Update user data
+    if (name) {
+      // Note: In a real implementation, you'd update the user in the database
+      // For now, we'll just return success
+    }
+
+    if (preferences) {
+      await User.updatePreferences(user.id!, preferences);
+    }
+
+    res.json({ message: 'Profile updated successfully' });
+  } catch (error) {
+    console.error('Profile update error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

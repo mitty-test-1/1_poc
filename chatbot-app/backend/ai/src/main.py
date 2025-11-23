@@ -15,6 +15,7 @@ from services.sentiment_analysis import SentimentAnalysis
 from services.response_generator import ResponseGenerator
 from services.model_manager import ModelManager
 from services.performance_monitor import PerformanceMonitor
+from services.monitoring_service import MonitoringService
 
 # Load environment variables
 load_dotenv()
@@ -33,6 +34,7 @@ sentiment_analysis = SentimentAnalysis()
 response_generator = ResponseGenerator()
 model_manager = ModelManager()
 performance_monitor = PerformanceMonitor()
+monitoring_service = MonitoringService()
 
 # FastAPI app
 app = FastAPI(
@@ -115,6 +117,10 @@ async def health_check():
 @app.post("/process")
 async def process_message(request: MessageRequest):
     """Process a message and return AI response"""
+    import time
+    start_time = time.time()
+    success = True
+    
     try:
         # Process message with NLP
         nlp_result = await nlp_processor.process(
@@ -151,6 +157,22 @@ async def process_message(request: MessageRequest):
             request.context
         )
         
+        # Record metrics
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
+        monitoring_service.record_ai_request(
+            request_type="process",
+            response_time=response_time,
+            success=success,
+            model_used="nlp_processor"
+        )
+        
+        # Record accuracy
+        monitoring_service.record_ai_accuracy(
+            model="nlp_processor",
+            task="message_processing",
+            accuracy=response_result["confidence"]
+        )
+        
         return MessageResponse(
             response=response_result["response"],
             confidence=response_result["confidence"],
@@ -167,18 +189,46 @@ async def process_message(request: MessageRequest):
         )
         
     except Exception as e:
+        success = False
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
+        monitoring_service.record_ai_request(
+            request_type="process",
+            response_time=response_time,
+            success=success,
+            model_used="nlp_processor"
+        )
         logger.error(f"Error processing message: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/intent")
 async def recognize_intent(request: IntentRequest):
     """Recognize intent from message"""
+    import time
+    start_time = time.time()
+    success = True
+    
     try:
         result = await intent_recognition.analyze(
             request.message,
             request.user_id,
             None,
             request.context
+        )
+        
+        # Record metrics
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
+        monitoring_service.record_ai_request(
+            request_type="intent_recognition",
+            response_time=response_time,
+            success=success,
+            model_used="intent_classifier"
+        )
+        
+        # Record accuracy
+        monitoring_service.record_ai_accuracy(
+            model="intent_classifier",
+            task="intent_recognition",
+            accuracy=result["confidence"]
         )
         
         return {
@@ -189,18 +239,46 @@ async def recognize_intent(request: IntentRequest):
         }
         
     except Exception as e:
+        success = False
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
+        monitoring_service.record_ai_request(
+            request_type="intent_recognition",
+            response_time=response_time,
+            success=success,
+            model_used="intent_classifier"
+        )
         logger.error(f"Error recognizing intent: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/sentiment")
 async def analyze_sentiment(request: SentimentRequest):
     """Analyze sentiment of message"""
+    import time
+    start_time = time.time()
+    success = True
+    
     try:
         result = await sentiment_analysis.analyze(
             request.message,
             request.user_id,
             request.conversation_id,
             request.context
+        )
+        
+        # Record metrics
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
+        monitoring_service.record_ai_request(
+            request_type="sentiment_analysis",
+            response_time=response_time,
+            success=success,
+            model_used="sentiment_analyzer"
+        )
+        
+        # Record accuracy
+        monitoring_service.record_ai_accuracy(
+            model="sentiment_analyzer",
+            task="sentiment_analysis",
+            accuracy=result["confidence"]
         )
         
         return {
@@ -212,6 +290,14 @@ async def analyze_sentiment(request: SentimentRequest):
         }
         
     except Exception as e:
+        success = False
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
+        monitoring_service.record_ai_request(
+            request_type="sentiment_analysis",
+            response_time=response_time,
+            success=success,
+            model_used="sentiment_analyzer"
+        )
         logger.error(f"Error analyzing sentiment: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -324,6 +410,15 @@ async def update_model_performance(model_name: str, performance_metrics: Dict[st
     """Update model performance metrics"""
     try:
         result = await model_manager.update_model_performance(model_name, performance_metrics)
+        
+        # Record accuracy metrics
+        if "accuracy" in performance_metrics:
+            monitoring_service.record_ai_accuracy(
+                model=model_name,
+                task="model_performance",
+                accuracy=performance_metrics["accuracy"]
+            )
+        
         return result
         
     except Exception as e:
@@ -379,8 +474,20 @@ async def resolve_alert(alert_id: str):
 async def get_performance_summary(hours: int = 24):
     """Get performance summary"""
     try:
-        result = await performance_monitor.get_performance_summary(hours)
-        return result
+        # Get AI-specific monitoring data
+        ai_metrics = monitoring_service.get_ai_metrics(hours)
+        
+        # Get general performance metrics
+        general_metrics = await performance_monitor.get_performance_summary(hours)
+        
+        # Combine metrics
+        combined_summary = {
+            "ai_metrics": ai_metrics,
+            "general_metrics": general_metrics,
+            "timestamp": "2024-01-01T00:00:00Z"
+        }
+        
+        return combined_summary
         
     except Exception as e:
         logger.error(f"Error getting performance summary: {e}")
@@ -401,8 +508,22 @@ async def update_thresholds(request: ThresholdUpdateRequest):
 async def export_metrics(format: str = "json", hours: int = 24):
     """Export metrics in specified format"""
     try:
-        result = await performance_monitor.export_metrics(format, hours)
-        return result
+        # Get AI-specific monitoring data
+        ai_metrics = monitoring_service.export_metrics(format, hours)
+        
+        # Get general performance metrics
+        general_metrics = await performance_monitor.export_metrics(format, hours)
+        
+        # Combine metrics
+        combined_export = {
+            "ai_metrics": ai_metrics,
+            "general_metrics": general_metrics,
+            "format": format,
+            "hours": hours,
+            "timestamp": "2024-01-01T00:00:00Z"
+        }
+        
+        return combined_export
         
     except Exception as e:
         logger.error(f"Error exporting metrics: {e}")
@@ -454,6 +575,197 @@ async def get_emotion_examples(emotion: str):
         logger.error(f"Error getting emotion examples for {emotion}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Enhanced chat endpoints
+class GenerateResponseRequest(BaseModel):
+    conversation_id: str
+    message: str
+    user_id: str
+    context: Optional[Dict[str, Any]] = None
+
+class SuggestionsRequest(BaseModel):
+    conversation_id: str
+    user_id: str
+    context: Optional[Dict[str, Any]] = None
+
+class SentimentAnalysisRequest(BaseModel):
+    conversation_id: str
+
+class SummaryRequest(BaseModel):
+    conversation_id: str
+
+@app.post("/generate-response")
+async def generate_ai_response(request: GenerateResponseRequest):
+    """Generate AI response for chat message"""
+    import time
+    start_time = time.time()
+    success = True
+    
+    try:
+        # Process message with NLP
+        nlp_result = await nlp_processor.process(
+            request.message,
+            request.user_id,
+            request.conversation_id,
+            request.context
+        )
+        
+        # Recognize intent
+        intent_result = await intent_recognition.analyze(
+            request.message,
+            request.user_id,
+            request.conversation_id,
+            request.context
+        )
+        
+        # Analyze sentiment
+        sentiment_result = await sentiment_analysis.analyze(
+            request.message,
+            request.user_id,
+            request.conversation_id,
+            request.context
+        )
+        
+        # Generate response
+        response_result = await response_generator.generate(
+            request.message,
+            intent_result["intent"],
+            nlp_result["entities"],
+            sentiment_result["sentiment"],
+            request.user_id,
+            request.conversation_id,
+            request.context
+        )
+        
+        # Record metrics
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
+        monitoring_service.record_ai_request(
+            request_type="generate_response",
+            response_time=response_time,
+            success=success,
+            model_used="response_generator"
+        )
+        
+        # Record accuracy
+        monitoring_service.record_ai_accuracy(
+            model="response_generator",
+            task="response_generation",
+            accuracy=response_result["confidence"]
+        )
+        
+        return {
+            "response": response_result["response"],
+            "confidence": response_result["confidence"],
+            "intent": intent_result["intent"],
+            "sentiment": sentiment_result["sentiment"],
+            "entities": nlp_result["entities"],
+            "suggestions": response_result.get("suggestions", []),
+            "attachments": response_result.get("attachments", []),
+            "metadata": {
+                "nlp_processing": nlp_result,
+                "intent_analysis": intent_result,
+                "sentiment_analysis": sentiment_result,
+                "response_generation": response_result,
+                "timestamp": "2024-01-01T00:00:00Z"
+            }
+        }
+        
+    except Exception as e:
+        success = False
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
+        monitoring_service.record_ai_request(
+            request_type="generate_response",
+            response_time=response_time,
+            success=success,
+            model_used="response_generator"
+        )
+        logger.error(f"Error generating AI response: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/suggestions")
+async def get_conversation_suggestions(request: SuggestionsRequest):
+    """Get conversation suggestions"""
+    try:
+        # Get conversation history
+        conversation_history = await response_generator.get_conversation_history(
+            request.conversation_id,
+            request.user_id
+        )
+        
+        # Generate suggestions based on context
+        suggestions = await response_generator.generate_suggestions(
+            request.user_id,
+            request.conversation_id,
+            conversation_history,
+            request.context
+        )
+        
+        return {
+            "suggestions": suggestions["suggestions"],
+            "confidence": suggestions["confidence"],
+            "context": suggestions.get("context", {}),
+            "timestamp": "2024-01-01T00:00:00Z"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting suggestions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analyze-sentiment")
+async def analyze_conversation_sentiment(request: SentimentAnalysisRequest):
+    """Analyze sentiment of entire conversation"""
+    try:
+        # Get conversation history
+        conversation_history = await response_generator.get_conversation_history(
+            request.conversation_id
+        )
+        
+        # Analyze overall sentiment
+        sentiment_result = await sentiment_analysis.analyze_conversation(
+            conversation_history
+        )
+        
+        return {
+            "sentiment": sentiment_result["sentiment"],
+            "confidence": sentiment_result["confidence"],
+            "scores": sentiment_result["scores"],
+            "emotions": sentiment_result["emotions"],
+            "trend": sentiment_result.get("trend", "stable"),
+            "metadata": sentiment_result.get("metadata", {})
+        }
+        
+    except Exception as e:
+        logger.error(f"Error analyzing conversation sentiment: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/summary")
+async def generate_conversation_summary(request: SummaryRequest):
+    """Generate conversation summary"""
+    try:
+        # Get conversation history
+        conversation_history = await response_generator.get_conversation_history(
+            request.conversation_id
+        )
+        
+        # Generate summary
+        summary_result = await response_generator.generate_summary(
+            conversation_history,
+            request.conversation_id
+        )
+        
+        return {
+            "summary": summary_result["summary"],
+            "key_points": summary_result.get("key_points", []),
+            "topics": summary_result.get("topics", []),
+            "sentiment_trend": summary_result.get("sentiment_trend", "neutral"),
+            "duration": summary_result.get("duration", 0),
+            "message_count": summary_result.get("message_count", 0),
+            "metadata": summary_result.get("metadata", {})
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating conversation summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Background tasks
 @app.on_event("startup")
 async def startup_event():
@@ -463,6 +775,9 @@ async def startup_event():
         
         # Start performance monitoring
         await performance_monitor.start_monitoring(interval=60)
+        
+        # Start AI monitoring service
+        await monitoring_service.start_monitoring(interval=60)
         
         # Load default models
         await model_manager.load_model("intent_classifier")
@@ -483,6 +798,9 @@ async def shutdown_event():
         # Stop performance monitoring
         await performance_monitor.stop_monitoring()
         
+        # Stop AI monitoring service
+        await monitoring_service.stop_monitoring()
+        
         # Unload all models
         models = await model_manager.get_available_models()
         for model in models:
@@ -498,7 +816,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=3007,
         reload=True,
         log_level="info"
     )

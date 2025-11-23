@@ -1,27 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Card, 
-  Row, 
-  Col, 
-  Statistic, 
-  Typography, 
-  Button, 
-  Space, 
-  Table, 
-  Tag, 
+import {
+  Card,
+  Row,
+  Col,
+  Statistic,
+  Typography,
+  Button,
+  Space,
+  Table,
+  Tag,
   Progress,
   Alert,
-  Spin
+  Spin,
+  Tabs
 } from '@shared-ui';
-import { 
-  UserOutlined, 
-  MessageOutlined, 
-  ClockCircleOutlined, 
+import {
+  UserOutlined,
+  MessageOutlined,
+  ClockCircleOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
   ArrowUpOutlined,
-  ArrowDownOutlined
+  ArrowDownOutlined,
+  LineChartOutlined,
+  BarChartOutlined,
+  AlertTriangleOutlined
 } from '@ant-design/icons';
+import RealTimeAnalytics from './RealTimeAnalytics';
 
 interface DashboardStats {
   totalUsers: number;
@@ -210,138 +215,181 @@ const Dashboard: React.FC = () => {
         closable
       />
 
-      {/* Stats Cards */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Total Users"
-              value={stats.totalUsers}
-              prefix={<UserOutlined />}
-              valueStyle={{ color: '#3f8600' }}
-              suffix={
-                <span className="text-green-600 text-sm">
-                  <ArrowUpOutlined /> 12%
-                </span>
-              }
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Active Conversations"
-              value={stats.activeConversations}
-              prefix={<MessageOutlined />}
-              valueStyle={{ color: '#cf1322' }}
-              suffix={
-                <span className="text-red-600 text-sm">
-                  <ArrowUpOutlined /> 5%
-                </span>
-              }
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Resolved Today"
-              value={stats.resolvedToday}
-              prefix={<CheckCircleOutlined />}
-              valueStyle={{ color: '#3f8600' }}
-              suffix={
-                <span className="text-green-600 text-sm">
-                  <ArrowUpOutlined /> 8%
-                </span>
-              }
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Avg Response Time"
-              value={stats.avgResponseTime}
-              suffix="min"
-              prefix={<ClockCircleOutlined />}
-              valueStyle={{ color: '#1890ff' }}
-              precision={1}
-            />
-          </Card>
-        </Col>
-      </Row>
+      {/* Main Content Tabs */}
+      <Tabs defaultActiveKey="overview" items={[
+        {
+          key: 'overview',
+          label: (
+            <span>
+              <LineChartOutlined />
+              Overview
+            </span>
+          ),
+          children: (
+            <>
+              {/* Stats Cards */}
+              <Row gutter={[16, 16]}>
+                <Col xs={24} sm={12} lg={6}>
+                  <Card>
+                    <Statistic
+                      title="Total Users"
+                      value={stats.totalUsers}
+                      prefix={<UserOutlined />}
+                      valueStyle={{ color: '#3f8600' }}
+                      suffix={
+                        <span className="text-green-600 text-sm">
+                          <ArrowUpOutlined /> 12%
+                        </span>
+                      }
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} lg={6}>
+                  <Card>
+                    <Statistic
+                      title="Active Conversations"
+                      value={stats.activeConversations}
+                      prefix={<MessageOutlined />}
+                      valueStyle={{ color: '#cf1322' }}
+                      suffix={
+                        <span className="text-red-600 text-sm">
+                          <ArrowUpOutlined /> 5%
+                        </span>
+                      }
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} lg={6}>
+                  <Card>
+                    <Statistic
+                      title="Resolved Today"
+                      value={stats.resolvedToday}
+                      prefix={<CheckCircleOutlined />}
+                      valueStyle={{ color: '#3f8600' }}
+                      suffix={
+                        <span className="text-green-600 text-sm">
+                          <ArrowUpOutlined /> 8%
+                        </span>
+                      }
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} lg={6}>
+                  <Card>
+                    <Statistic
+                      title="Avg Response Time"
+                      value={stats.avgResponseTime}
+                      suffix="min"
+                      prefix={<ClockCircleOutlined />}
+                      valueStyle={{ color: '#1890ff' }}
+                      precision={1}
+                    />
+                  </Card>
+                </Col>
+              </Row>
 
-      {/* Charts Row */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <Card title="Satisfaction Rate" extra={<Button type="link">View Details</Button>}>
-            <div className="text-center">
-              <Progress type="circle" percent={stats.satisfactionRate} size={120} />
-              <div className="mt-4">
-                <Typography.Text strong>{stats.satisfactionRate}%</Typography.Text>
-                <Typography.Text type="secondary"> Customer Satisfaction</Typography.Text>
+              {/* Charts Row */}
+              <Row gutter={[16, 16]}>
+                <Col xs={24} lg={12}>
+                  <Card title="Satisfaction Rate" extra={<Button type="link">View Details</Button>}>
+                    <div className="text-center">
+                      <Progress type="circle" percent={stats.satisfactionRate} size={120} />
+                      <div className="mt-4">
+                        <Typography.Text strong>{stats.satisfactionRate}%</Typography.Text>
+                        <Typography.Text type="secondary"> Customer Satisfaction</Typography.Text>
+                      </div>
+                    </div>
+                  </Card>
+                </Col>
+                <Col xs={24} lg={12}>
+                  <Card title="Recent Conversations" extra={<Button type="link">View All</Button>}>
+                    <Table
+                      dataSource={recentConversations}
+                      columns={columns}
+                      pagination={false}
+                      rowKey="id"
+                      size="small"
+                    />
+                  </Card>
+                </Col>
+              </Row>
+
+              {/* Quick Actions */}
+              <Card title="Quick Actions">
+                <Row gutter={[16, 16]}>
+                  <Col xs={24} sm={12} lg={6}>
+                    <Button
+                      type="primary"
+                      block
+                      icon={<MessageOutlined />}
+                      href="/conversations"
+                    >
+                      Manage Conversations
+                    </Button>
+                  </Col>
+                  <Col xs={24} sm={12} lg={6}>
+                    <Button
+                      type="default"
+                      block
+                      icon={<UserOutlined />}
+                      href="/users"
+                    >
+                      User Management
+                    </Button>
+                  </Col>
+                  <Col xs={24} sm={12} lg={6}>
+                    <Button
+                      type="default"
+                      block
+                      icon={<ExclamationCircleOutlined />}
+                      href="/analytics"
+                    >
+                      View Analytics
+                    </Button>
+                  </Col>
+                  <Col xs={24} sm={12} lg={6}>
+                    <Button
+                      type="default"
+                      block
+                      icon={<CheckCircleOutlined />}
+                      href="/settings"
+                    >
+                      System Settings
+                    </Button>
+                  </Col>
+                </Row>
+              </Card>
+            </>
+          )
+        },
+        {
+          key: 'realtime',
+          label: (
+            <span>
+              <BarChartOutlined />
+              Real-Time Analytics
+            </span>
+          ),
+          children: <RealTimeAnalytics />
+        },
+        {
+          key: 'alerts',
+          label: (
+            <span>
+              <AlertTriangleOutlined />
+              System Alerts
+            </span>
+          ),
+          children: (
+            <Card title="Recent System Alerts">
+              <div className="text-center py-8 text-gray-500">
+                <AlertTriangleOutlined className="text-4xl mb-4" />
+                <p>No active alerts at this time</p>
               </div>
-            </div>
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="Recent Conversations" extra={<Button type="link">View All</Button>}>
-            <Table
-              dataSource={recentConversations}
-              columns={columns}
-              pagination={false}
-              rowKey="id"
-              size="small"
-            />
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Quick Actions */}
-      <Card title="Quick Actions">
-        <Row gutter={[16, 16]}>
-          <Col xs={24} sm={12} lg={6}>
-            <Button 
-              type="primary" 
-              block 
-              icon={<MessageOutlined />}
-              href="/conversations"
-            >
-              Manage Conversations
-            </Button>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Button 
-              type="default" 
-              block 
-              icon={<UserOutlined />}
-              href="/users"
-            >
-              User Management
-            </Button>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Button 
-              type="default" 
-              block 
-              icon={<ExclamationCircleOutlined />}
-              href="/analytics"
-            >
-              View Analytics
-            </Button>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Button 
-              type="default" 
-              block 
-              icon={<CheckCircleOutlined />}
-              href="/settings"
-            >
-              System Settings
-            </Button>
-          </Col>
-        </Row>
-      </Card>
+            </Card>
+          )
+        }
+      ]} />
     </div>
   );
 };

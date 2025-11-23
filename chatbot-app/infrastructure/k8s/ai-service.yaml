@@ -22,7 +22,7 @@ spec:
       - name: ai-service
         image: chatbot-app/ai-service:latest
         ports:
-        - containerPort: 8000
+        - containerPort: 3007
           name: http
         env:
         - name: DATABASE_URL
@@ -52,13 +52,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: 8000
+            port: 3007
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /health
-            port: 8000
+            port: 3007
           initialDelaySeconds: 5
           periodSeconds: 5
         volumeMounts:
@@ -82,8 +82,8 @@ spec:
   selector:
     app: ai-service
   ports:
-  - port: 8000
-    targetPort: 8000
+  - port: 3007
+    targetPort: 3007
     name: http
   type: ClusterIP
 ---
@@ -111,7 +111,7 @@ spec:
           service:
             name: ai-service
             port:
-              number: 8000
+              number: 3007
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -250,7 +250,7 @@ spec:
           app: api-gateway
     ports:
     - protocol: TCP
-      port: 8000
+      port: 3007
   egress:
   - to:
     - namespaceSelector:

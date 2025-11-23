@@ -1,0 +1,300 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Chatbot Application Dashboard",
+    "tags": ["chatbot", "monitoring"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=\"kubernetes-pods\"}",
+            "legendFormat": "{{service_name}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "options": {
+                  "0": { "text": "DOWN" },
+                  "1": { "text": "UP" }
+                },
+                "type": "value"
+              }
+            ],
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "green", "value": 1 }
+              ]
+            },
+            "unit": "none"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "CPU Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "100 - (avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+            "legendFormat": "{{instance}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 70 },
+                { "color": "red", "value": 90 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "Memory Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
+            "legendFormat": "{{instance}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 70 },
+                { "color": "red", "value": 90 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "id": 4,
+        "title": "Disk Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "(1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100",
+            "legendFormat": "{{instance}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 70 },
+                { "color": "red", "value": 90 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 5,
+        "title": "Service Request Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total[5m])",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+      },
+      {
+        "id": 6,
+        "title": "Service Response Time",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
+      },
+      {
+        "id": 7,
+        "title": "Service Error Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m]) * 100",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 5 },
+                { "color": "red", "value": 10 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 }
+      },
+      {
+        "id": 8,
+        "title": "Active Users",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(active_users)",
+            "legendFormat": "Total"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 24 }
+      },
+      {
+        "id": 9,
+        "title": "Messages Per Second",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(chat_messages_total[5m])",
+            "legendFormat": "Messages"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 24 }
+      },
+      {
+        "id": 10,
+        "title": "AI Processing Time",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ai_processing_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{component}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 }
+      },
+      {
+        "id": 11,
+        "title": "AI Accuracy",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "ai_accuracy",
+            "legendFormat": "{{component}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 80 },
+                { "color": "green", "value": 95 }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 }
+      },
+      {
+        "id": 12,
+        "title": "Alerts",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "ALERTS{alertname!=\"\"}",
+            "legendFormat": "{{alertname}}"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "filterFieldsByName",
+            "options": {
+              "fields": {
+                "include": ["alertname", "severity", "service", "value", "time"]
+              }
+            }
+          }
+        ],
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "timepicker": {
+      "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "timeRange",
+          "type": "custom",
+          "query": "1h,3h,6h,12h,1d,7d,30d",
+          "current": {
+            "selected": false,
+            "text": "1h",
+            "value": "1h"
+          },
+          "options": [
+            { "selected": true, "text": "1h", "value": "1h" },
+            { "selected": false, "text": "3h", "value": "3h" },
+            { "selected": false, "text": "6h", "value": "6h" },
+            { "selected": false, "text": "12h", "value": "12h" },
+            { "selected": false, "text": "1d", "value": "1d" },
+            { "selected": false, "text": "7d", "value": "7d" },
+            { "selected": false, "text": "30d", "value": "30d" }
+          ]
+        }
+      ]
+    }
+  }
+}

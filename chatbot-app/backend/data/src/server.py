@@ -10,6 +10,7 @@ import asyncio
 import logging
 
 from services.analytics_service import AnalyticsService
+from routes.ab_testing import router as ab_testing_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +34,9 @@ security = HTTPBearer()
 
 # Analytics Service
 analytics_service = AnalyticsService()
+
+# Include A/B testing routes
+app.include_router(ab_testing_router, prefix="/api")
 
 # Initialize service
 @app.on_event("startup")

@@ -13,6 +13,7 @@ import { errorHandler } from './middleware/errorHandler';
 import { rateLimiter } from './middleware/rateLimiter';
 import { requestLogger } from './middleware/requestLogger';
 import { healthCheckRoutes } from './routes/health';
+import { metricsMiddleware, metricsEndpoint } from './middleware/metrics';
 
 dotenv.config();
 
@@ -32,6 +33,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Custom middleware
 app.use(requestLogger);
 app.use(rateLimiter);
+app.use(metricsMiddleware);
 
 // Routes
 app.use('/health', healthCheckRoutes);
@@ -41,6 +43,9 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/personalization', personalizationRoutes);
 app.use('/api/data', dataRoutes);
 app.use('/api/ai', aiRoutes);
+
+// Metrics endpoint
+app.get('/metrics', metricsEndpoint);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -74,6 +79,7 @@ app.use('*', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 API Gateway running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
+  console.log(`📈 Metrics endpoint: http://localhost:${PORT}/metrics`);
   console.log(`🔗 Services available:`);
   console.log(`   - Auth: http://localhost:${PORT}/api/auth`);
   console.log(`   - Chat: http://localhost:${PORT}/api/chat`);

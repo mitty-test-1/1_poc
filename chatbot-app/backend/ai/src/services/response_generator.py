@@ -642,3 +642,250 @@ class ResponseGenerator:
         except Exception as e:
             self.logger.error(f"Error getting user insights: {e}")
             return {"error": str(e)}
+    
+    async def get_conversation_history(self, conversation_id: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get conversation history for analysis"""
+        try:
+            # In a real implementation, this would fetch from a database
+            # For now, return empty list
+            return []
+            
+        except Exception as e:
+            self.logger.error(f"Error getting conversation history: {e}")
+            return []
+    
+    async def generate_suggestions(self, user_id: str, conversation_id: str,
+                                 conversation_history: List[Dict[str, Any]],
+                                 context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Generate conversation suggestions"""
+        try:
+            suggestions = []
+            
+            # Analyze conversation context
+            if conversation_history:
+                last_intent = conversation_history[-1].get("intent", "general")
+                last_sentiment = conversation_history[-1].get("sentiment", "neutral")
+                
+                # Generate context-aware suggestions
+                if last_intent == "complaint":
+                    suggestions = [
+                        "Would you like me to escalate this issue?",
+                        "Can I provide more information about our resolution process?",
+                        "Would you like to speak with a supervisor?"
+                    ]
+                elif last_intent == "information":
+                    suggestions = [
+                        "Would you like more details on this topic?",
+                        "Is there anything specific you'd like to know?",
+                        "Can I help you with related information?"
+                    ]
+                elif last_intent == "booking":
+                    suggestions = [
+                        "Would you like a confirmation of your booking?",
+                        "Can I help you modify your reservation?",
+                        "Would you like information about nearby services?"
+                    ]
+                else:
+                    suggestions = [
+                        "Is there anything else I can help you with?",
+                        "Would you like assistance with something else?",
+                        "Can I provide information about other services?"
+                    ]
+            else:
+                # Default suggestions for new conversations
+                suggestions = [
+                    "How can I help you today?",
+                    "What would you like to discuss?",
+                    "Is there something specific you need assistance with?"
+                ]
+            
+            # Filter and prioritize suggestions based on user preferences
+            if user_id and user_id in self.user_profiles:
+                user_preferences = self.user_profiles[user_id].get("preferences", {})
+                if user_preferences.get("suggestion_style") == "concise":
+                    suggestions = suggestions[:2]  # Limit to 2 suggestions
+            
+            return {
+                "suggestions": suggestions[:3],  # Return top 3 suggestions
+                "confidence": 0.8,
+                "context": {
+                    "last_intent": last_intent if conversation_history else None,
+                    "conversation_length": len(conversation_history),
+                    "user_id": user_id
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating suggestions: {e}")
+            return {
+                "suggestions": ["Is there anything else I can help you with?"],
+                "confidence": 0.5,
+                "context": {}
+            }
+    
+    async def analyze_conversation(self, conversation_history: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze sentiment of entire conversation"""
+        try:
+            if not conversation_history:
+                return {
+                    "sentiment": "neutral",
+                    "confidence": 0.0,
+                    "scores": {"positive": 0.0, "negative": 0.0, "neutral": 1.0},
+                    "emotions": {},
+                    "trend": "stable"
+                }
+            
+            # Calculate overall sentiment scores
+            positive_count = sum(1 for conv in conversation_history if conv.get("sentiment") == "positive")
+            negative_count = sum(1 for conv in conversation_history if conv.get("sentiment") == "negative")
+            neutral_count = sum(1 for conv in conversation_history if conv.get("sentiment") == "neutral")
+            
+            total_messages = len(conversation_history)
+            positive_score = positive_count / total_messages
+            negative_score = negative_count / total_messages
+            neutral_score = neutral_count / total_messages
+            
+            # Determine overall sentiment
+            if positive_score > negative_score and positive_score > neutral_score:
+                overall_sentiment = "positive"
+            elif negative_score > positive_score and negative_score > neutral_score:
+                overall_sentiment = "negative"
+            else:
+                overall_sentiment = "neutral"
+            
+            # Calculate trend
+            if total_messages >= 3:
+                recent_half = conversation_history[total_messages//2:]
+                recent_positive = sum(1 for conv in recent_half if conv.get("sentiment") == "positive")
+                recent_negative = sum(1 for conv in recent_half if conv.get("sentiment") == "negative")
+                
+                if recent_positive > recent_negative:
+                    trend = "improving"
+                elif recent_negative > recent_positive:
+                    trend = "declining"
+                else:
+                    trend = "stable"
+            else:
+                trend = "stable"
+            
+            # Extract emotions (simplified)
+            emotions = {}
+            for conv in conversation_history:
+                sentiment = conv.get("sentiment", "neutral")
+                if sentiment == "positive":
+                    emotions["happy"] = emotions.get("happy", 0) + 1
+                    emotions["satisfied"] = emotions.get("satisfied", 0) + 1
+                elif sentiment == "negative":
+                    emotions["frustrated"] = emotions.get("frustrated", 0) + 1
+                    emotions["disappointed"] = emotions.get("disappointed", 0) + 1
+                else:
+                    emotions["neutral"] = emotions.get("neutral", 0) + 1
+            
+            # Normalize emotion scores
+            total_emotions = sum(emotions.values())
+            if total_emotions > 0:
+                emotions = {k: v/total_emotions for k, v in emotions.items()}
+            
+            # Calculate confidence based on conversation length and sentiment consistency
+            confidence = min(0.9, total_messages * 0.1)  # More messages = higher confidence
+            
+            return {
+                "sentiment": overall_sentiment,
+                "confidence": confidence,
+                "scores": {
+                    "positive": positive_score,
+                    "negative": negative_score,
+                    "neutral": neutral_score
+                },
+                "emotions": emotions,
+                "trend": trend,
+                "metadata": {
+                    "total_messages": total_messages,
+                    "positive_messages": positive_count,
+                    "negative_messages": negative_count,
+                    "neutral_messages": neutral_count
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing conversation: {e}")
+            return {
+                "sentiment": "neutral",
+                "confidence": 0.0,
+                "scores": {"positive": 0.0, "negative": 0.0, "neutral": 1.0},
+                "emotions": {},
+                "trend": "stable"
+            }
+    
+    async def generate_summary(self, conversation_history: List[Dict[str, Any]],
+                             conversation_id: str) -> Dict[str, Any]:
+        """Generate conversation summary"""
+        try:
+            if not conversation_history:
+                return {
+                    "summary": "No conversation data available.",
+                    "key_points": [],
+                    "topics": [],
+                    "sentiment_trend": "neutral",
+                    "duration": 0,
+                    "message_count": 0,
+                    "metadata": {}
+                }
+            
+            # Extract key topics from intents
+            intents = [conv.get("intent", "general") for conv in conversation_history]
+            unique_intents = list(set(intents))
+            
+            # Generate summary based on conversation content
+            if "complaint" in unique_intents:
+                summary_type = "issue_resolution"
+                summary = "This conversation focused on resolving a customer issue."
+            elif "booking" in unique_intents:
+                summary_type = "reservation"
+                summary = "This conversation involved making a reservation."
+            elif "information" in unique_intents:
+                summary_type = "information_request"
+                summary = "This conversation provided information to the customer."
+            else:
+                summary_type = "general"
+                summary = "This was a general customer service conversation."
+            
+            # Extract key points
+            key_points = []
+            for conv in conversation_history[:5]:  # Consider first 5 messages
+                intent = conv.get("intent", "general")
+                if intent in ["complaint", "booking", "information"]:
+                    key_points.append(f"Discussed {intent} related topic")
+            
+            # Calculate sentiment trend
+            sentiment_analysis = await self.analyze_conversation(conversation_history)
+            sentiment_trend = sentiment_analysis.get("trend", "neutral")
+            
+            # Calculate duration (simplified - using message count as proxy)
+            duration = len(conversation_history) * 30  # Assume 30 seconds per message
+            
+            return {
+                "summary": summary,
+                "key_points": key_points[:3],  # Limit to 3 key points
+                "topics": unique_intents[:5],  # Limit to 5 topics
+                "sentiment_trend": sentiment_trend,
+                "duration": duration,
+                "message_count": len(conversation_history),
+                "metadata": {
+                    "summary_type": summary_type,
+                    "conversation_id": conversation_id,
+                    "generated_at": datetime.utcnow().isoformat()
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating summary: {e}")
+            return {
+                "summary": "Unable to generate summary at this time.",
+                "key_points": [],
+                "topics": [],
+                "sentiment_trend": "neutral",
+                "duration": 0,
+                "message_count": len(conversation_history),
+                "metadata": {"error": str(e)}
+            }

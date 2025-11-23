@@ -62,4 +62,61 @@ export class ConversationManager {
     const query = 'UPDATE conversations SET admin_id = $1 WHERE id = $2';
     await pool.query(query, [adminId, conversationId]);
   }
+
+  static async getAll(options: {
+    page?: number;
+    limit?: number;
+    userId?: string;
+    status?: string;
+    startDate?: string;
+    endDate?: string;
+  } = {}): Promise<any[]> {
+    const { page = 1, limit = 20, userId, status, startDate, endDate } = options;
+    const offset = (page - 1) * limit;
+    
+    let query = `
+      SELECT c.*, u.name as user_name, a.name as admin_name
+      FROM conversations c
+      LEFT JOIN users u ON c.user_id = u.id
+      LEFT JOIN users a ON c.admin_id = a.id
+    `;
+    
+    const queryParams: any[] = [];
+    let whereConditions: string[] = [];
+    let paramIndex = 1;
+    
+    if (userId) {
+      whereConditions.push(`c.user_id = $${paramIndex}`);
+      queryParams.push(userId);
+      paramIndex++;
+    }
+    
+    if (status) {
+      whereConditions.push(`c.status = $${paramIndex}`);
+      queryParams.push(status);
+      paramIndex++;
+    }
+    
+    if (startDate) {
+      whereConditions.push(`c.started_at >= $${paramIndex}`);
+      queryParams.push(startDate);
+      paramIndex++;
+    }
+    
+    if (endDate) {
+      whereConditions.push(`c.started_at <= $${paramIndex}`);
+      queryParams.push(endDate);
+      paramIndex++;
+    }
+    
+    if (whereConditions.length > 0) {
+      query += ' WHERE ' + whereConditions.join(' AND ');
+    }
+    
+    query += ` ORDER BY c.started_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    queryParams.push(limit, offset);
+    
+    const result = await pool.query(query, queryParams);
+    return result.rows;
+  }
 }
